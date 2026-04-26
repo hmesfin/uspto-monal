@@ -49,17 +49,23 @@ def run_backfill(
     conn: sqlite3.Connection,
     months: int = 60,
     today: date | None = None,
+    progress: bool = True,
 ) -> int:
     """Iterate month windows, list files, download + process each.
+    Commits per file so an interrupt loses at most one file's work.
     Returns total in-scope rows inserted/updated.
     """
     today = today or date.today()
     total = 0
     for start, end in month_windows(today, months):
         files = client.list_files(date_from=start, date_to=end)
+        if progress:
+            print(f"  {start} → {end}: {len(files)} files")
         for f in files:
             zip_bytes = client.download_file(f["fileName"])
-            total += process_zip(zip_bytes, conn)
-        # Commit at end of each month so an interrupt only loses one window.
-        conn.commit()
+            n = process_zip(zip_bytes, conn)
+            conn.commit()
+            total += n
+            if progress:
+                print(f"    {f['fileName']}: +{n} (running total {total})")
     return total
