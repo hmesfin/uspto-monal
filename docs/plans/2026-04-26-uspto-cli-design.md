@@ -19,9 +19,14 @@ A Python CLI tool that pulls USPTO trademark filings, filters to the healthcare-
 
 ## Approach
 
-API-first using the USPTO Open Data Portal (ODP) trademark search API. Local SQLite for storage. Plotly + Jinja2 for the trend report.
+Bulk daily XML downloads via the USPTO Open Data Portal (ODP) datasets API (`TRTDXFAP` product = "Trademark Full Text XML Data – Daily Applications"). Local SQLite for storage. Plotly + Jinja2 for the trend report.
 
-Bulk XML downloads were considered and rejected — the filter is narrow enough that the search API can handle backfill in reasonable time, and bulk parsing adds complexity that doesn't pay off until we need higher fidelity than the API provides.
+**Why bulk XML, not a search API:** Verified during the Task 5 spike that USPTO has no JSON search API for trademarks. Only patents have `/search` endpoints. Trademark options are: (1) TSDR for single-record lookups by serial number, (2) bulk daily XML, (3) third-party paid wrappers. Bulk XML is the authoritative source — every new application appears in the daily file. We download per day, stream-parse with `xml.etree.iterparse`, classify against our healthcare+AI filter, and persist matching records to SQLite.
+
+Trade-offs accepted:
+- Daily files are 2–200 MB each; need streaming parse, not full-DOM load
+- Filtering happens client-side after download — but the filter is cheap and the volume per day is manageable (tens of thousands of records)
+- No rate-limit concerns since we're downloading whole-day files, not making per-record requests
 
 ## CLI Surface
 
@@ -99,15 +104,15 @@ monitor_runs (
 ## Data Flow
 
 **Backfill** (one-shot):
-- Iterate month-by-month over the last 60 months
-- For each month: query API with filter, paginate, UPSERT into `applications` + `nice_classes`
-- Idempotent — re-running resumes safely (at most one redundant month re-fetched)
+- For each day in the last ~5 years: list available files, download the daily ZIP, stream-parse the XML
+- For each `<case-file>` element: extract fields, classify against healthcare+AI filter, UPSERT if in-scope
+- Commit at end of each day's file (recovery checkpoint)
+- Idempotent via `serial_number` PK + `INSERT … ON CONFLICT DO UPDATE`
 
 **Monitor** (weekly):
 - `since_date = max(filing_date) from applications`, fallback to 7 days ago
-- Query API for filings ≥ `since_date`
-- Diff against existing `serial_number`s
-- Format new rows per `--format`
+- List daily files since `since_date`, download + parse + filter + UPSERT
+- Surface the newly-inserted serial numbers per `--format`
 - Insert one row into `monitor_runs`
 
 **Report** (on demand):

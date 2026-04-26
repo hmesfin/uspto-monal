@@ -14,9 +14,16 @@
 
 ---
 
-## Important note on the USPTO ODP API
+## Important note on the USPTO data path
 
-I do not have a verified-current spec of the USPTO Open Data Portal trademark search API in this plan. Task 5 is a deliberate **spike** task: make one real API call, save the JSON response as a fixture, then build the typed client from observed shape. Do not skip this — guessing field names from training data is the #1 source of waste in this kind of work.
+The USPTO Open Data Portal does NOT have a JSON search API for trademarks. (Verified during a Task 5 spike — only patent endpoints have `/search`.) The authoritative trademark data is the **`TRTDXFAP` bulk dataset** ("Trademark Full Text XML Data – Daily Applications") — a daily ZIP-of-XML file per filing date.
+
+We will:
+- **List files**: `GET https://api.uspto.gov/api/v1/datasets/products/TRTDXFAP?fileDataFromDate=YYYY-MM-DD&fileDataToDate=YYYY-MM-DD` returns `{"productFileBag": {"fileDataBag": [{"fileName", "fileDataFromDate", "fileDownloadURI", "fileSize"}, ...]}}`
+- **Download**: `GET /api/v1/datasets/products/files/TRTDXFAP/{fileName}` returns a ZIP containing one XML file
+- **Auth**: `X-API-KEY` header (verified working)
+- **Parse**: `xml.etree.iterparse` for streaming (files can hit 200 MB)
+- **Filter client-side** via the healthcare+AI classifier from Task 4
 
 Sign up for an ODP API key at https://data.uspto.gov/ before starting Task 5.
 
@@ -702,408 +709,613 @@ git commit -m "feat: add healthcare+AI classifier"
 
 ---
 
-## Task 5: USPTO API client — SPIKE FIRST
+## Task 5: USPTO ODP datasets client — spike-verified
 
-This task is structured differently because the exact ODP API response shape needs to be verified, not guessed.
+The Task 5 spike confirmed: trademark data lives in the `TRTDXFAP` daily bulk dataset. The client downloads files; it does not search. Two methods only.
 
 **Files:**
-- Create: `tests/fixtures/api/search_sample.json` (captured live)
+- Create: `scripts/probe_api.py` (committed; reproducible)
+- Create: `tests/fixtures/api/files_listing_sample.json` (captured live)
+- Create: `tests/fixtures/api/sample_day.zip` OR `tests/fixtures/api/sample_day.xml` (captured live; choose smallest reasonable)
 - Create: `src/uspto/client.py`
 - Create: `tests/test_client.py`
-- Create: `scripts/probe_api.py` (one-shot tool, will be committed for reproducibility)
 
-**Step 1: Write the probe script**
+### Step 1: Probe script
 
 `scripts/probe_api.py`:
 ```python
-"""One-shot tool to capture an example USPTO ODP trademark search response.
+"""Probe the USPTO ODP datasets API for the TRTDXFAP trademark bulk product.
 
 Usage:
-  USPTO_API_KEY=... python scripts/probe_api.py > tests/fixtures/api/search_sample.json
+  USPTO_API_KEY=... python scripts/probe_api.py
+Writes:
+  tests/fixtures/api/files_listing_sample.json   (file listing for a 1-week window)
+  tests/fixtures/api/sample_day.zip              (one daily ZIP)
+
+The captured ZIP is committed to the repo so tests don't need network access.
+Expected ZIP size: 5–50 MB. If a single day is too large, narrow the listing
+window or pick the smallest file in the listing before downloading.
 """
 import json
 import os
 import sys
+from pathlib import Path
 import httpx
 
-API_KEY = os.environ["USPTO_API_KEY"]
-BASE = "https://api.uspto.gov"  # verify in ODP docs
+BASE = "https://api.uspto.gov"
+PRODUCT = "TRTDXFAP"
+HEADERS = {"X-API-KEY": os.environ["USPTO_API_KEY"]}
+FIX = Path("tests/fixtures/api")
+FIX.mkdir(parents=True, exist_ok=True)
 
-# This URL/payload is a STARTING GUESS. Adjust based on the actual ODP
-# trademark search endpoint. Consult https://data.uspto.gov/ for the
-# current schema.
-url = f"{BASE}/api/v1/trademarks/search"
-params = {
-    "q": "diagnostic AI",
-    "limit": 5,
-}
-headers = {"X-API-KEY": API_KEY}
+# 1) List files in a recent week (USPTO publishes Tue–Fri typically; pick a
+#    range that's likely to contain at least one file).
+listing = httpx.get(
+    f"{BASE}/api/v1/datasets/products/{PRODUCT}",
+    params={"fileDataFromDate": "2026-04-15", "fileDataToDate": "2026-04-22"},
+    headers=HEADERS, timeout=30,
+)
+listing.raise_for_status()
+data = listing.json()
+(FIX / "files_listing_sample.json").write_text(json.dumps(data, indent=2))
 
-resp = httpx.get(url, params=params, headers=headers, timeout=30)
-resp.raise_for_status()
-print(json.dumps(resp.json(), indent=2))
-sys.stderr.write(f"Status: {resp.status_code}\nFields top-level: {list(resp.json().keys())}\n")
+# 2) Download the smallest file in the listing.
+files = data["productFileBag"]["fileDataBag"]
+if not files:
+    sys.exit("No files in listing — widen the date window")
+smallest = min(files, key=lambda f: f.get("fileSize", 1 << 62))
+print(f"Downloading {smallest['fileName']} ({smallest.get('fileSize')} bytes)", file=sys.stderr)
+zip_resp = httpx.get(
+    f"{BASE}/api/v1/datasets/products/files/{PRODUCT}/{smallest['fileName']}",
+    headers=HEADERS, timeout=120, follow_redirects=True,
+)
+zip_resp.raise_for_status()
+(FIX / "sample_day.zip").write_bytes(zip_resp.content)
+print(f"Saved sample_day.zip ({len(zip_resp.content)} bytes)", file=sys.stderr)
 ```
 
-**Step 2: Run the probe — capture real response shape**
+### Step 2: Run the probe
 
 ```bash
-mkdir -p tests/fixtures/api
-# Loads .env automatically? No — bash doesn't. Either source it first or pass inline.
+cd /home/hamel/projects/cli-tools/uspto
 set -a && source .env && set +a
-python scripts/probe_api.py > tests/fixtures/api/search_sample.json
+python scripts/probe_api.py
 ```
 
-If the URL/params guess is wrong, the script will 404 or 4xx. **STOP** and consult the ODP API documentation at https://data.uspto.gov/ before proceeding. Adjust the probe until you get a 200 with real data, then re-save the fixture.
+Expected: writes `tests/fixtures/api/files_listing_sample.json` (~few KB) and `tests/fixtures/api/sample_day.zip` (~5–50 MB).
 
-Expected outcome: a `search_sample.json` containing real USPTO trademark records. Note the actual field names — they may differ from the design doc's assumed names (e.g., `serialNumber` vs `serial_number`, `markText` vs `mark_text`).
+If the ZIP is over 50 MB, look at the smallest file's contents (USPTO's daily Sundays/holidays might have been reissued with larger size). Pick another date or accept the size — but flag if it's >100 MB.
 
-**Step 3: Document the observed schema**
-
-Open the fixture, identify the fields needed for `applications` and `nice_classes` tables, and write a short table-mapping doc as a code comment at the top of `src/uspto/client.py`:
+### Step 3: Implement client.py
 
 ```python
-"""USPTO Open Data Portal trademark search client.
+"""USPTO ODP datasets client for the TRTDXFAP trademark bulk product.
 
-API → DB field mapping (verified against tests/fixtures/api/search_sample.json):
-  <api_field>            → <db_column>
-  ...
+Verified via spike (see scripts/probe_api.py and tests/fixtures/api/):
+  Base: https://api.uspto.gov
+  Auth: X-API-KEY header
+  List: GET /api/v1/datasets/products/TRTDXFAP?fileDataFromDate=&fileDataToDate=
+        → {"productFileBag": {"fileDataBag": [{"fileName", "fileDataFromDate",
+            "fileDownloadURI", "fileSize"}, ...]}}
+  Get:  GET /api/v1/datasets/products/files/TRTDXFAP/{fileName} → ZIP bytes
+
+This module ONLY handles HTTP. XML parsing lives in extract.py (Task 6).
 """
-```
-
-**Step 4: Implement client.py with retry**
-
-```python
-import time
 import random
-import httpx
-from typing import Iterator
+import time
 from datetime import date
+from typing import Iterator
+import httpx
 
-BASE_URL = "https://api.uspto.gov"  # confirm against probe
+
+BASE_URL = "https://api.uspto.gov"
+PRODUCT = "TRTDXFAP"
 
 
 class USPTOClient:
-    def __init__(self, api_key: str, base_url: str = BASE_URL, timeout: float = 30.0):
+    def __init__(self, api_key: str, base_url: str = BASE_URL, timeout: float = 60.0):
         self._client = httpx.Client(
             base_url=base_url,
             headers={"X-API-KEY": api_key},
             timeout=timeout,
+            follow_redirects=True,
         )
 
-    def search(
-        self,
-        *,
-        date_from: date,
-        date_to: date,
-        offset: int = 0,
-        limit: int = 100,
-    ) -> dict:
-        """Return one page of search results."""
-        # Adjust path/params based on probe results
-        return self._request(
+    def list_files(self, *, date_from: date, date_to: date) -> list[dict]:
+        """Return list of file metadata dicts in the date range.
+
+        Each dict contains at least: fileName, fileDataFromDate, fileSize.
+        Empty list if no files.
+        """
+        data = self._request(
             "GET",
-            "/api/v1/trademarks/search",
+            f"/api/v1/datasets/products/{PRODUCT}",
             params={
-                "filingDateFrom": date_from.isoformat(),
-                "filingDateTo": date_to.isoformat(),
-                "offset": offset,
-                "limit": limit,
+                "fileDataFromDate": date_from.isoformat(),
+                "fileDataToDate": date_to.isoformat(),
             },
         )
+        return (
+            data.get("productFileBag", {}).get("fileDataBag", [])
+            or []
+        )
 
-    def search_paginated(
-        self, *, date_from: date, date_to: date, page_size: int = 100
-    ) -> Iterator[dict]:
-        """Yield one record at a time across all pages for the date window."""
-        offset = 0
-        while True:
-            page = self.search(
-                date_from=date_from, date_to=date_to,
-                offset=offset, limit=page_size,
-            )
-            results = page.get("results", [])  # adjust key
-            if not results:
-                return
-            for r in results:
-                yield r
-            if len(results) < page_size:
-                return
-            offset += page_size
+    def download_file(self, file_name: str) -> bytes:
+        """Return the raw ZIP bytes for one daily file."""
+        resp = self._request_raw(
+            "GET",
+            f"/api/v1/datasets/products/files/{PRODUCT}/{file_name}",
+        )
+        return resp.content
 
     def _request(self, method: str, path: str, **kwargs) -> dict:
+        resp = self._request_raw(method, path, **kwargs)
+        return resp.json()
+
+    def _request_raw(self, method: str, path: str, **kwargs) -> httpx.Response:
+        """Retry 429 and 5xx with exponential backoff + jitter, max 5 attempts."""
+        last_resp = None
         for attempt in range(5):
             resp = self._client.request(method, path, **kwargs)
+            last_resp = resp
             if resp.status_code == 429 or resp.status_code >= 500:
                 wait = (2 ** attempt) + random.random()
                 time.sleep(wait)
                 continue
             resp.raise_for_status()
-            return resp.json()
-        resp.raise_for_status()
-        return resp.json()
+            return resp
+        last_resp.raise_for_status()
+        return last_resp
 
-    def close(self):
+    def close(self) -> None:
         self._client.close()
 ```
 
-**Step 5: Write tests against the fixture**
+### Step 4: Tests with respx
 
 `tests/test_client.py`:
 ```python
 import json
 from pathlib import Path
+from datetime import date
 import respx
 from httpx import Response
-from datetime import date
 from uspto.client import USPTOClient
 
 
-FIXTURE = Path(__file__).parent / "fixtures" / "api" / "search_sample.json"
+FIX = Path(__file__).parent / "fixtures" / "api"
+LISTING = FIX / "files_listing_sample.json"
+ZIP_FIX = FIX / "sample_day.zip"
 
 
 @respx.mock
-def test_search_returns_results():
-    payload = json.loads(FIXTURE.read_text())
-    respx.get(url__regex=r".*/trademarks/search").mock(
-        return_value=Response(200, json=payload)
+def test_list_files_returns_metadata_list():
+    respx.get(url__regex=r".*/datasets/products/TRTDXFAP$|.*/datasets/products/TRTDXFAP\?.*").mock(
+        return_value=Response(200, json=json.loads(LISTING.read_text()))
     )
     client = USPTOClient(api_key="x")
-    res = client.search(date_from=date(2025,1,1), date_to=date(2025,1,31))
-    # confirm SOME field present — adjust based on actual fixture shape
-    assert isinstance(res, dict)
+    files = client.list_files(date_from=date(2026, 4, 15), date_to=date(2026, 4, 22))
+    assert isinstance(files, list)
+    assert all("fileName" in f for f in files)
+
+
+@respx.mock
+def test_list_files_empty_listing():
+    respx.get(url__regex=r".*/datasets/products/TRTDXFAP.*").mock(
+        return_value=Response(200, json={"productFileBag": {"fileDataBag": []}})
+    )
+    client = USPTOClient(api_key="x")
+    assert client.list_files(date_from=date(2026, 1, 1), date_to=date(2026, 1, 7)) == []
+
+
+@respx.mock
+def test_download_file_returns_bytes():
+    body = ZIP_FIX.read_bytes()
+    respx.get(url__regex=r".*/datasets/products/files/TRTDXFAP/.*").mock(
+        return_value=Response(200, content=body)
+    )
+    client = USPTOClient(api_key="x")
+    out = client.download_file("apa.zip")
+    assert out == body
+    assert out[:2] == b"PK"  # ZIP magic
 
 
 @respx.mock
 def test_429_retries_then_succeeds(monkeypatch):
     monkeypatch.setattr("time.sleep", lambda _: None)
-    payload = json.loads(FIXTURE.read_text())
-    route = respx.get(url__regex=r".*/trademarks/search")
+    route = respx.get(url__regex=r".*/datasets/products/TRTDXFAP.*")
     route.side_effect = [
         Response(429),
-        Response(200, json=payload),
+        Response(200, json=json.loads(LISTING.read_text())),
     ]
     client = USPTOClient(api_key="x")
-    res = client.search(date_from=date(2025,1,1), date_to=date(2025,1,31))
-    assert isinstance(res, dict)
-
-
-@respx.mock
-def test_pagination_terminates_on_short_page():
-    full = json.loads(FIXTURE.read_text())
-    # build a 'short page' variant — only valid if 'results' key exists in fixture
-    # ADAPT this test to the real response shape after spike
-    short = {**full, "results": full.get("results", [])[:1]}
-    respx.get(url__regex=r".*/trademarks/search").mock(
-        return_value=Response(200, json=short)
-    )
-    client = USPTOClient(api_key="x")
-    rows = list(client.search_paginated(
-        date_from=date(2025,1,1), date_to=date(2025,1,31), page_size=100,
-    ))
-    assert len(rows) <= 1
+    files = client.list_files(date_from=date(2026, 4, 15), date_to=date(2026, 4, 22))
+    assert isinstance(files, list)
 ```
 
-**Step 6: Run tests**
+### Step 5: Run + commit
 
 ```bash
+source .venv/bin/activate
 pytest tests/test_client.py -v
 ```
 
-Expected: 3 passed (after adjusting field names to match real fixture).
-
-**Step 7: Commit**
+Expected: 4 passed.
 
 ```bash
-git add src/uspto/client.py tests/test_client.py tests/fixtures/api/search_sample.json scripts/probe_api.py
-git commit -m "feat: add USPTO ODP client with retry; capture API fixture"
+git add src/uspto/client.py tests/test_client.py \
+        tests/fixtures/api/files_listing_sample.json \
+        tests/fixtures/api/sample_day.zip \
+        scripts/probe_api.py
+git commit -m "feat: add USPTO ODP datasets client + bulk XML fixture"
+```
+
+**Note on the ZIP fixture (important for OSS hygiene):**
+Don't commit the raw 5–50 MB daily ZIP — it bloats git history. Instead:
+
+1. The probe downloads the real ZIP to `.local/sample_day.full.zip` (gitignored — see `.gitignore` patterns: `*.full.zip` or use `tests/fixtures/api/*.local.*`).
+2. Open it, inspect the structure once.
+3. Hand-curate a small `sample_day.zip` containing just 2–3 representative `<case-file>` elements (one in-scope healthcare+AI, one out-of-scope) wrapped in the same root element. Aim for under 50 KB.
+4. Commit only the small curated ZIP.
+
+The smaller fixture is enough to verify: client downloads → extractor parses → backfill ingests. Real-data scale testing happens via the live API on first `uspto backfill` run.
+
+Add to `.gitignore` if not already there:
+```
+tests/fixtures/api/*.full.zip
+.local/
 ```
 
 ---
 
-## Task 6: Record extractor (translate API row → DB row)
+## Task 6: XML extractor (case-file → DB row dict)
+
+The downloaded ZIP contains one XML file per daily release. The XML follows the U.S. Trademark Applications DTD (v2.3 as of 2026). Each `<case-file>` element is one trademark application.
+
+**Goals:**
+- Stream-parse the XML (don't load all into memory — files can be 200 MB)
+- Convert each `<case-file>` element to the same dict shape `upsert_application` already expects (so storage/filter/backfill code is unchanged)
+- Extract Nice classes as `list[str]`
 
 **Files:**
 - Create: `src/uspto/extract.py`
 - Create: `tests/test_extract.py`
 
-**Step 1: Write failing tests using the real fixture**
+### Step 1: Verify the XML structure
+
+Before writing extractor code, the implementer should:
+1. Unzip `tests/fixtures/api/sample_day.zip` once and identify the XML's element structure.
+2. Note the exact element names — the DTD uses lowercase-hyphenated names (e.g., `<case-file>`, `<serial-number>`, `<mark-identification>`, `<filing-date>`).
+3. Document the observed structure in a comment at the top of `extract.py`.
+
+Common elements to target (verify against the actual file):
+- `<serial-number>` — the 8-digit ID, our PK
+- `<case-file-header>` containing:
+  - `<filing-date>` (YYYYMMDD or YYYY-MM-DD)
+  - `<registration-date>` (nullable)
+  - `<status-code>`
+  - `<mark-identification>` — the human-readable mark text
+- `<case-file-statements>` containing one or more `<case-file-statement>` elements; the goods/services description has `type-code` starting `GS` (e.g. `GS0341`)
+- `<classifications>` containing one or more `<classification>` elements with `<international-code>` (the Nice class)
+- `<case-file-owners>` containing one or more `<case-file-owner>` with `<party-name>`, `<address-1>`, `<state>`, `<country>`
+
+### Step 2: Write a failing test against the real fixture
 
 `tests/test_extract.py`:
 ```python
-import json
+import zipfile
 from pathlib import Path
-from uspto.extract import extract_application
+from uspto.extract import iter_case_files, extract_application, extract_nice_classes
 
 
-FIXTURE = Path(__file__).parent / "fixtures" / "api" / "search_sample.json"
+FIX = Path(__file__).parent / "fixtures" / "api"
+ZIP_FIX = FIX / "sample_day.zip"
 
 
-def _first_record():
-    data = json.loads(FIXTURE.read_text())
-    # ADJUST after probe — depends on fixture shape
-    return data["results"][0]
+def _open_xml():
+    """Open the inner XML from the sample ZIP as a binary stream."""
+    with zipfile.ZipFile(ZIP_FIX) as z:
+        # The ZIP contains one .xml file
+        names = [n for n in z.namelist() if n.endswith(".xml")]
+        assert len(names) == 1, f"Expected 1 xml, got {names}"
+        return z.read(names[0])
+
+
+def test_iter_case_files_yields_elements():
+    xml_bytes = _open_xml()
+    elems = list(iter_case_files(xml_bytes))
+    assert len(elems) > 0
 
 
 def test_extract_application_returns_required_fields():
-    raw = _first_record()
-    row = extract_application(raw)
-    required = {
-        "serial_number", "mark_text", "filing_date", "owner_name",
-        "description", "raw_json",
-    }
+    xml_bytes = _open_xml()
+    elem = next(iter_case_files(xml_bytes))
+    row = extract_application(elem)
+    required = {"serial_number", "mark_text", "filing_date", "description",
+                "owner_name", "fetched_at", "raw_json"}
     assert required.issubset(row.keys())
-    assert row["serial_number"]  # not empty
+    assert row["serial_number"]
+    # date parsed properly
+    if row["filing_date"]:
+        assert hasattr(row["filing_date"], "year")  # is a date
+
+
+def test_extract_nice_classes_returns_strings():
+    xml_bytes = _open_xml()
+    elem = next(iter_case_files(xml_bytes))
+    classes = extract_nice_classes(elem)
+    assert isinstance(classes, list)
+    for c in classes:
+        assert isinstance(c, str)
 ```
 
-**Step 2: Run, verify failure**
+### Step 3: Run, verify failure
 
 ```bash
 pytest tests/test_extract.py -v
 ```
 
-Expected: ImportError.
+Expected: ImportError on `uspto.extract`.
 
-**Step 3: Implement extract.py based on the fixture's actual field names**
+### Step 4: Implement extract.py
 
 ```python
-"""Translate USPTO API response rows into our DB row dicts.
+"""Translate USPTO trademark XML <case-file> elements into DB row dicts.
 
-Field mapping derived from tests/fixtures/api/search_sample.json.
-If the API changes, update this file and the test fixture together.
+XML element mapping (verified against tests/fixtures/api/sample_day.zip):
+  <serial-number>                              → applications.serial_number
+  <case-file-header>/<mark-identification>     → applications.mark_text
+  <case-file-header>/<filing-date>             → applications.filing_date
+  <case-file-header>/<registration-date>       → applications.registration_date
+  <case-file-header>/<status-code>             → applications.status_code
+  <case-file-statements>/<case-file-statement>
+       where type-code starts "GS"             → applications.description
+  <classifications>/<classification>/<international-code>  → nice_classes.class_code
+  <case-file-owners>/<case-file-owner>[0]/<party-name>     → applications.owner_name
+
+If the DTD changes, update this file and re-capture the fixture.
 """
 import json
 from datetime import date, datetime
+from typing import Iterator
+from xml.etree import ElementTree as ET
 
 
-def extract_application(raw: dict) -> dict:
-    """Map one API record → applications row dict.
+def iter_case_files(xml_bytes: bytes) -> Iterator[ET.Element]:
+    """Stream-yield <case-file> elements from a USPTO trademark daily XML.
 
-    Note: do NOT set matched_ai_terms / matched_hc_terms here —
-    the classifier in filter.py handles that, and backfill wires them in.
+    Memory-bounded: clears each element after yielding so the parser doesn't
+    accumulate the entire document in memory.
     """
-    # ADJUST these paths based on the actual fixture
+    import io
+    parser = ET.iterparse(io.BytesIO(xml_bytes), events=("end",))
+    for event, elem in parser:
+        if elem.tag == "case-file":
+            yield elem
+            elem.clear()
+
+
+def extract_application(elem: ET.Element) -> dict:
+    """Map one <case-file> element → applications row dict (no matched_*_terms)."""
+    header = elem.find("case-file-header")
     return {
-        "serial_number": raw.get("serialNumber") or raw.get("serial_number"),
-        "mark_text": raw.get("markText") or raw.get("mark_text"),
-        "filing_date": _parse_date(raw.get("filingDate")),
-        "registration_date": _parse_date(raw.get("registrationDate")),
-        "status_code": raw.get("statusCode"),
-        "status_description": raw.get("statusDescription"),
-        "owner_name": _first_owner(raw),
-        "owner_state": _first_owner_field(raw, "state"),
-        "owner_country": _first_owner_field(raw, "country"),
-        "description": _first_desc(raw),
+        "serial_number": _text(elem, "serial-number"),
+        "mark_text": _text(header, "mark-identification") if header is not None else None,
+        "filing_date": _parse_date(_text(header, "filing-date") if header is not None else None),
+        "registration_date": _parse_date(_text(header, "registration-date") if header is not None else None),
+        "status_code": _text(header, "status-code") if header is not None else None,
+        "status_description": None,  # not in feed; could derive from status_code lookup later
+        "owner_name": _first_owner_field(elem, "party-name"),
+        "owner_state": _first_owner_field(elem, "owner-address-state-or-country"),
+        "owner_country": _first_owner_field(elem, "owner-address-country"),
+        "description": _goods_services_description(elem),
         "fetched_at": datetime.utcnow(),
-        "raw_json": json.dumps(raw),
+        "raw_json": json.dumps(_xml_to_dict(elem)),  # lossy but searchable
     }
 
 
-def extract_nice_classes(raw: dict) -> list[str]:
-    """Return list of class codes as strings."""
-    classes = raw.get("niceClasses") or raw.get("internationalClassCodes") or []
-    return [str(c) for c in classes]
+def extract_nice_classes(elem: ET.Element) -> list[str]:
+    """Return list of Nice class codes as strings."""
+    out: list[str] = []
+    for cls in elem.iterfind(".//classification"):
+        code = _text(cls, "international-code")
+        if code:
+            out.append(code.lstrip("0") or "0")
+    return out
+
+
+# --- helpers ---
+
+def _text(parent: ET.Element | None, tag: str) -> str | None:
+    if parent is None:
+        return None
+    found = parent.find(tag)
+    return found.text if found is not None and found.text else None
 
 
 def _parse_date(s: str | None) -> date | None:
     if not s:
         return None
-    return date.fromisoformat(s[:10])
-
-
-def _first_owner(raw: dict) -> str | None:
-    owners = raw.get("owners") or []
-    if not owners:
+    s = s.strip()
+    # USPTO uses YYYYMMDD with no separators in this feed
+    if len(s) == 8 and s.isdigit():
+        return date(int(s[:4]), int(s[4:6]), int(s[6:8]))
+    try:
+        return date.fromisoformat(s[:10])
+    except ValueError:
         return None
-    return owners[0].get("name") or owners[0].get("ownerName")
 
 
-def _first_owner_field(raw: dict, key: str) -> str | None:
-    owners = raw.get("owners") or []
-    if not owners:
+def _first_owner_field(elem: ET.Element, tag: str) -> str | None:
+    """Return the first owner's value for `tag`, searched anywhere in case-file-owners."""
+    owners = elem.find("case-file-owners")
+    if owners is None:
         return None
-    return owners[0].get(key)
+    first_owner = owners.find("case-file-owner")
+    if first_owner is None:
+        return None
+    return _text(first_owner, tag)
 
 
-def _first_desc(raw: dict) -> str:
-    """Concatenate goods/services descriptions across all classes."""
-    descs = raw.get("goodsAndServices") or raw.get("descriptionsOfGoodsAndServices") or []
-    if isinstance(descs, str):
-        return descs
-    return " | ".join(d.get("description", "") for d in descs)
+def _goods_services_description(elem: ET.Element) -> str:
+    """Concatenate all goods/services statements (type-code starting with 'GS')."""
+    parts: list[str] = []
+    statements = elem.find("case-file-statements")
+    if statements is None:
+        return ""
+    for stmt in statements.iterfind("case-file-statement"):
+        type_code = _text(stmt, "type-code") or ""
+        text = _text(stmt, "text") or ""
+        if type_code.startswith("GS") and text:
+            parts.append(text)
+    return " | ".join(parts)
+
+
+def _xml_to_dict(elem: ET.Element) -> dict:
+    """Lossy XML → dict for `raw_json` storage. Keys are tag names; nested children
+    become nested dicts; repeated tags become lists. Attributes prefixed with @."""
+    result: dict = {}
+    for k, v in elem.attrib.items():
+        result[f"@{k}"] = v
+    for child in elem:
+        child_value = _xml_to_dict(child) if len(child) or child.attrib else (child.text or "")
+        if child.tag in result:
+            if not isinstance(result[child.tag], list):
+                result[child.tag] = [result[child.tag]]
+            result[child.tag].append(child_value)
+        else:
+            result[child.tag] = child_value
+    if not result and elem.text:
+        return elem.text
+    if elem.text and elem.text.strip():
+        result["#text"] = elem.text.strip()
+    return result
 ```
 
-**Step 4: Run tests**
+**Important:** the DTD element names above are educated estimates from public USPTO documentation. The implementer **must verify** them against the real fixture. If `<filing-date>` is actually `<filed-date>`, change it. If the goods/services type-codes don't match `GS*`, find the right ones empirically. The test cases will catch surface-level errors; visual inspection of the XML catches subtler ones.
+
+### Step 5: Run tests + iterate
 
 ```bash
+source .venv/bin/activate
 pytest tests/test_extract.py -v
 ```
 
-Expected: 1 passed (after extractor is adapted to the real fixture shape).
+Expected: 3 passed (after element name verification).
 
-**Step 5: Commit**
+If tests fail because the real DTD uses different names: open the XML, fix the names in `extract.py`, re-run. Don't change the tests — the tests verify the contract (right keys present, types correct), not the specific element names.
+
+### Step 6: Commit
 
 ```bash
 git add src/uspto/extract.py tests/test_extract.py
-git commit -m "feat: add API → DB row extractor"
+git commit -m "feat: add XML case-file extractor with streaming parse"
 ```
 
 ---
 
 ## Task 7: Backfill orchestrator (TDD)
 
+Iterates over the date range, lists files via the client, downloads each ZIP, stream-parses, classifies, and UPSERTs in-scope records.
+
 **Files:**
 - Create: `src/uspto/backfill.py`
 - Create: `tests/test_backfill.py`
 
-**Step 1: Write failing test**
+### Step 1: Write failing tests
 
 `tests/test_backfill.py`:
 ```python
+import zipfile
+import io
 from datetime import date
+from pathlib import Path
 from unittest.mock import MagicMock
-from uspto.backfill import run_backfill, month_windows
+from uspto.backfill import run_backfill, month_windows, process_zip
 from uspto.storage import connect, create_schema
+
+
+FIX = Path(__file__).parent / "fixtures" / "api"
 
 
 def test_month_windows_yields_n_months():
     windows = list(month_windows(date(2026, 4, 26), months=3))
     assert len(windows) == 3
-    # most recent first
     assert windows[0][0] <= date(2026, 4, 26) <= windows[0][1]
 
 
-def test_run_backfill_inserts_in_scope_only(tmp_path):
+def _make_zip(xml_bytes: bytes) -> bytes:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("apa.xml", xml_bytes)
+    return buf.getvalue()
+
+
+def test_process_zip_inserts_in_scope_only(tmp_path):
     conn = connect(tmp_path / "x.db")
     create_schema(conn)
-    fake_client = MagicMock()
-    # one in-scope (AI + healthcare + class 42), one out-of-scope (no AI terms)
-    fake_client.search_paginated.return_value = iter([
-        {
-            "serialNumber": "97000001",
-            "markText": "MEDAI",
-            "filingDate": "2025-03-15",
-            "owners": [{"name": "Acme"}],
-            "goodsAndServices": [{"description": "AI diagnostic software"}],
-            "niceClasses": ["42"],
-        },
-        {
-            "serialNumber": "97000002",
-            "markText": "BOOTBARN",
-            "filingDate": "2025-03-15",
-            "owners": [{"name": "Boots Inc"}],
-            "goodsAndServices": [{"description": "Cowboy boots"}],
-            "niceClasses": ["25"],
-        },
-    ])
-    run_backfill(fake_client, conn, months=1, today=date(2025, 3, 31))
-
+    # Two records: one in-scope (AI + diagnostic + class 42), one out-of-scope
+    xml = b"""<?xml version="1.0" encoding="UTF-8"?>
+<trademark-applications-daily>
+  <case-file>
+    <serial-number>97000001</serial-number>
+    <case-file-header>
+      <mark-identification>MEDAI</mark-identification>
+      <filing-date>20250315</filing-date>
+      <status-code>630</status-code>
+    </case-file-header>
+    <case-file-statements>
+      <case-file-statement>
+        <type-code>GS0341</type-code>
+        <text>AI-powered diagnostic software for clinical use</text>
+      </case-file-statement>
+    </case-file-statements>
+    <classifications>
+      <classification><international-code>042</international-code></classification>
+    </classifications>
+    <case-file-owners>
+      <case-file-owner><party-name>Acme Health</party-name></case-file-owner>
+    </case-file-owners>
+  </case-file>
+  <case-file>
+    <serial-number>97000002</serial-number>
+    <case-file-header>
+      <mark-identification>BOOTBARN</mark-identification>
+      <filing-date>20250315</filing-date>
+      <status-code>630</status-code>
+    </case-file-header>
+    <case-file-statements>
+      <case-file-statement>
+        <type-code>GS0341</type-code>
+        <text>Cowboy boots and accessories</text>
+      </case-file-statement>
+    </case-file-statements>
+    <classifications>
+      <classification><international-code>025</international-code></classification>
+    </classifications>
+    <case-file-owners>
+      <case-file-owner><party-name>Boots Inc</party-name></case-file-owner>
+    </case-file-owners>
+  </case-file>
+</trademark-applications-daily>
+"""
+    n = process_zip(_make_zip(xml), conn)
+    assert n == 1
     cursor = conn.execute("SELECT serial_number FROM applications")
-    rows = [r[0] for r in cursor.fetchall()]
-    assert rows == ["97000001"]
+    assert [r[0] for r in cursor.fetchall()] == ["97000001"]
+
+
+def test_run_backfill_calls_client_per_window(tmp_path):
+    conn = connect(tmp_path / "x.db")
+    create_schema(conn)
+    client = MagicMock()
+    client.list_files.return_value = []  # no files → no work
+    n = run_backfill(client, conn, months=2, today=date(2026, 4, 30))
+    assert n == 0
+    assert client.list_files.call_count == 2  # one per month
 ```
 
-**Step 2: Run, verify failure**
+### Step 2: Run, verify failure
 
 ```bash
 pytest tests/test_backfill.py -v
@@ -1111,15 +1323,17 @@ pytest tests/test_backfill.py -v
 
 Expected: ImportError.
 
-**Step 3: Implement backfill.py**
+### Step 3: Implement backfill.py
 
 ```python
-import json
+"""Backfill orchestrator: iterate date windows, download daily files, ingest."""
+import sqlite3
+import zipfile
+import io
 from datetime import date, timedelta
 from typing import Iterator
-import sqlite3
 from .client import USPTOClient
-from .extract import extract_application, extract_nice_classes
+from .extract import iter_case_files, extract_application, extract_nice_classes
 from .filter import classify
 from .storage import upsert_application, upsert_nice_classes
 
@@ -1134,67 +1348,93 @@ def month_windows(today: date, months: int) -> Iterator[tuple[date, date]]:
         end = start - timedelta(days=1)
 
 
+def process_zip(zip_bytes: bytes, conn: sqlite3.Connection) -> int:
+    """Parse one daily ZIP, classify, UPSERT in-scope rows. Returns count inserted."""
+    inserted = 0
+    with zipfile.ZipFile(io.BytesIO(zip_bytes)) as z:
+        xml_names = [n for n in z.namelist() if n.endswith(".xml")]
+        if not xml_names:
+            return 0
+        xml_bytes = z.read(xml_names[0])
+    for elem in iter_case_files(xml_bytes):
+        row = extract_application(elem)
+        if not row["serial_number"]:
+            continue
+        classes = extract_nice_classes(elem)
+        cls = classify(row["description"], classes)
+        if not cls.in_scope:
+            continue
+        row["matched_ai_terms"] = cls.ai_terms
+        row["matched_hc_terms"] = cls.hc_terms
+        upsert_application(conn, row)
+        upsert_nice_classes(conn, row["serial_number"], classes)
+        inserted += 1
+    return inserted
+
+
 def run_backfill(
     client: USPTOClient,
     conn: sqlite3.Connection,
     months: int = 60,
     today: date | None = None,
 ) -> int:
-    """Returns count of in-scope rows inserted/updated."""
+    """Iterate month windows, list files, download + process each.
+    Returns total in-scope rows inserted/updated.
+    """
     today = today or date.today()
-    inserted = 0
+    total = 0
     for start, end in month_windows(today, months):
-        for raw in client.search_paginated(date_from=start, date_to=end):
-            row = extract_application(raw)
-            if not row["serial_number"]:
-                continue
-            classes = extract_nice_classes(raw)
-            cls = classify(row["description"] or "", classes)
-            if not cls.in_scope:
-                continue
-            row["matched_ai_terms"] = cls.ai_terms
-            row["matched_hc_terms"] = cls.hc_terms
-            upsert_application(conn, row)
-            upsert_nice_classes(conn, row["serial_number"], classes)
-            inserted += 1
-        # Commit at end of each month — keeps batches small enough to recover
-        # from interruption without redoing too much work.
+        files = client.list_files(date_from=start, date_to=end)
+        for f in files:
+            zip_bytes = client.download_file(f["fileName"])
+            total += process_zip(zip_bytes, conn)
+        # Commit at end of each month so an interrupt only loses one window.
         conn.commit()
-    return inserted
+    return total
 ```
 
-**Step 4: Run tests**
+### Step 4: Run tests + commit
 
 ```bash
+source .venv/bin/activate
 pytest tests/test_backfill.py -v
 ```
 
-Expected: 2 passed.
-
-**Step 5: Commit**
+Expected: 3 passed.
 
 ```bash
 git add src/uspto/backfill.py tests/test_backfill.py
-git commit -m "feat: add backfill orchestrator with month-by-month iteration"
+git commit -m "feat: add backfill orchestrator (per-month bulk-XML ingest)"
 ```
 
 ---
 
 ## Task 8: Monitor command (TDD)
 
+Lists files since the last seen filing date, downloads + processes each via the same `process_zip` from Task 7. Returns a list of newly-inserted rows, formatted via one of three formatters.
+
 **Files:**
 - Create: `src/uspto/monitor.py`
 - Create: `tests/test_monitor.py`
 
-**Step 1: Write failing tests**
+### Step 1: Write failing tests
 
 `tests/test_monitor.py`:
 ```python
 import json
+import io
+import zipfile
 from datetime import date
 from unittest.mock import MagicMock
 from uspto.monitor import run_monitor, format_table, format_markdown, format_json
 from uspto.storage import connect, create_schema, upsert_application
+
+
+def _make_zip(xml_bytes: bytes) -> bytes:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("apa.xml", xml_bytes)
+    return buf.getvalue()
 
 
 def _existing_row(tmp_path):
@@ -1211,54 +1451,73 @@ def _existing_row(tmp_path):
         "matched_hc_terms": ["diagnostic"],
         "fetched_at": "2026-01-01", "raw_json": "{}",
     })
+    conn.commit()
     return conn
 
 
-def test_run_monitor_returns_only_new_in_scope_rows(tmp_path):
+def test_run_monitor_inserts_new_in_scope_rows(tmp_path):
     conn = _existing_row(tmp_path)
     client = MagicMock()
-    client.search_paginated.return_value = iter([
-        {  # already exists
-            "serialNumber": "97000001", "markText": "EXISTING",
-            "filingDate": "2025-01-01", "owners": [{"name": "X"}],
-            "goodsAndServices": [{"description": "AI diagnostic"}],
-            "niceClasses": ["42"],
-        },
-        {  # new + in-scope
-            "serialNumber": "97000999", "markText": "NEWAI",
-            "filingDate": "2026-04-20", "owners": [{"name": "Y"}],
-            "goodsAndServices": [{"description": "ML clinical decision support"}],
-            "niceClasses": ["42"],
-        },
-    ])
+    client.list_files.return_value = [{"fileName": "apa20260420.zip"}]
+    client.download_file.return_value = _make_zip(b"""<?xml version="1.0"?>
+<trademark-applications-daily>
+  <case-file>
+    <serial-number>97000999</serial-number>
+    <case-file-header>
+      <mark-identification>NEWAI</mark-identification>
+      <filing-date>20260420</filing-date>
+      <status-code>630</status-code>
+    </case-file-header>
+    <case-file-statements>
+      <case-file-statement>
+        <type-code>GS0341</type-code>
+        <text>ML clinical decision support</text>
+      </case-file-statement>
+    </case-file-statements>
+    <classifications>
+      <classification><international-code>042</international-code></classification>
+    </classifications>
+    <case-file-owners>
+      <case-file-owner><party-name>Y Corp</party-name></case-file-owner>
+    </case-file-owners>
+  </case-file>
+</trademark-applications-daily>
+""")
     new_rows = run_monitor(client, conn, today=date(2026, 4, 26))
     assert [r["serial_number"] for r in new_rows] == ["97000999"]
 
 
+def test_run_monitor_records_run(tmp_path):
+    conn = _existing_row(tmp_path)
+    client = MagicMock()
+    client.list_files.return_value = []
+    run_monitor(client, conn, today=date(2026, 4, 26))
+    cursor = conn.execute("SELECT new_count FROM monitor_runs")
+    assert cursor.fetchone()[0] == 0
+
+
 def test_format_json_is_valid():
     rows = [{"serial_number": "1", "mark_text": "X", "filing_date": "2026-04-01"}]
-    out = format_json(rows)
-    assert json.loads(out) == rows
+    assert json.loads(format_json(rows)) == rows
 
 
-def test_format_table_includes_serial(capsys):
+def test_format_table_includes_serial():
     rows = [{"serial_number": "97000999", "mark_text": "NEWAI",
              "filing_date": "2026-04-20", "owner_name": "Y",
              "matched_ai_terms": ["ML"]}]
-    out = format_table(rows)
-    assert "97000999" in out
+    assert "97000999" in format_table(rows)
 
 
-def test_format_markdown_has_links():
+def test_format_markdown_has_tsdr_link():
     rows = [{"serial_number": "97000999", "mark_text": "NEWAI",
              "filing_date": "2026-04-20", "owner_name": "Y",
              "matched_ai_terms": ["ML"]}]
     out = format_markdown(rows)
     assert "97000999" in out
-    assert "tsdr.uspto.gov" in out  # link to TSDR record
+    assert "tsdr.uspto.gov" in out
 ```
 
-**Step 2: Run, verify failure**
+### Step 2: Run, verify failure
 
 ```bash
 pytest tests/test_monitor.py -v
@@ -1266,18 +1525,21 @@ pytest tests/test_monitor.py -v
 
 Expected: ImportError.
 
-**Step 3: Implement monitor.py**
+### Step 3: Implement monitor.py
 
 ```python
+"""Monitor: download + process daily files since last seen, surface new rows."""
 import json
-from datetime import date, datetime, timedelta
 import sqlite3
+import zipfile
+import io
+from datetime import date, datetime, timedelta
 from .client import USPTOClient
-from .extract import extract_application, extract_nice_classes
+from .extract import iter_case_files, extract_application, extract_nice_classes
 from .filter import classify
 from .storage import (
+    get_existing_serials, get_max_filing_date,
     upsert_application, upsert_nice_classes,
-    get_max_filing_date, get_existing_serials,
 )
 
 
@@ -1290,24 +1552,35 @@ def run_monitor(
     today: date | None = None,
     since: date | None = None,
 ) -> list[dict]:
+    """Download daily files since `since` (default: max filing date in DB),
+    classify, UPSERT in-scope rows, return the newly-inserted ones."""
     today = today or date.today()
     since = since or get_max_filing_date(conn) or (today - timedelta(days=7))
-    new_rows = []
-    candidates = []
-    for raw in client.search_paginated(date_from=since, date_to=today):
-        row = extract_application(raw)
-        if not row["serial_number"]:
-            continue
-        classes = extract_nice_classes(raw)
-        cls = classify(row["description"] or "", classes)
-        if not cls.in_scope:
-            continue
-        row["matched_ai_terms"] = cls.ai_terms
-        row["matched_hc_terms"] = cls.hc_terms
-        candidates.append((row, classes))
+
+    candidates: list[tuple[dict, list[str]]] = []
+    files = client.list_files(date_from=since, date_to=today)
+    for f in files:
+        zip_bytes = client.download_file(f["fileName"])
+        with zipfile.ZipFile(io.BytesIO(zip_bytes)) as z:
+            xml_names = [n for n in z.namelist() if n.endswith(".xml")]
+            if not xml_names:
+                continue
+            xml_bytes = z.read(xml_names[0])
+        for elem in iter_case_files(xml_bytes):
+            row = extract_application(elem)
+            if not row["serial_number"]:
+                continue
+            classes = extract_nice_classes(elem)
+            cls = classify(row["description"], classes)
+            if not cls.in_scope:
+                continue
+            row["matched_ai_terms"] = cls.ai_terms
+            row["matched_hc_terms"] = cls.hc_terms
+            candidates.append((row, classes))
 
     serials = [r["serial_number"] for r, _ in candidates]
     existing = get_existing_serials(conn, serials)
+    new_rows: list[dict] = []
     for row, classes in candidates:
         if row["serial_number"] in existing:
             continue
@@ -1357,19 +1630,18 @@ def format_json(rows: list[dict]) -> str:
     return json.dumps(rows, default=default, indent=2)
 ```
 
-**Step 4: Run tests**
+### Step 4: Run + commit
 
 ```bash
+source .venv/bin/activate
 pytest tests/test_monitor.py -v
 ```
 
-Expected: 4 passed.
-
-**Step 5: Commit**
+Expected: 5 passed.
 
 ```bash
 git add src/uspto/monitor.py tests/test_monitor.py
-git commit -m "feat: add monitor command with delta + 3 output formats"
+git commit -m "feat: add monitor command with bulk-XML delta and 3 output formats"
 ```
 
 ---
