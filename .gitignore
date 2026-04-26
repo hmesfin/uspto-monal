@@ -10,5 +10,7 @@ build/
 .coverage
 trends.html
 tests/fixtures/api/*.json.local
+tests/fixtures/api/*.full.zip
+.local/
 .env
 .env.local

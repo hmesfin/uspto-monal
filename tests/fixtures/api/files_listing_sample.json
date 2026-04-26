@@ -1,0 +1,143 @@
+{
+  "count": 1,
+  "bulkDataProductBag": [
+    {
+      "productIdentifier": "TRTDXFAP",
+      "productDescriptionText": "Pending and registered trademark text data (no images) to include word mark, serial number, registration number, filing date, registration date, goods and services, classification number(s), status code(s), design search code(s), pseudo mark(s) in Calendar Year 2026. The file format is eXtensible Markup Language (XML) in accordance with the U.S. Trademark Applications Version 2.3 Document Type Definition (DTD).",
+      "productTitleText": "Trademark Full Text XML Data (No Images) \u2013 Daily Applications",
+      "productFrequencyText": "DAILY",
+      "productLabelArrayText": [
+        "Trademark"
+      ],
+      "productDatasetArrayText": [
+        "Authoritative"
+      ],
+      "productDatasetCategoryArrayText": [
+        "Trademark applications"
+      ],
+      "productFromDate": "2025-01-01",
+      "productToDate": "2026-04-25",
+      "productTotalFileSize": 16150104634,
+      "productFileTotalQuantity": 483,
+      "lastModifiedDateTime": "2026-04-23 00:26:11",
+      "mimeTypeIdentifierArrayText": [
+        "XML"
+      ],
+      "productFileBag": {
+        "count": 11,
+        "fileDataBag": [
+          {
+            "fileName": "apc260422.zip",
+            "fileSize": 29564573,
+            "fileDataFromDate": "2026-04-22",
+            "fileDataToDate": "2026-04-22",
+            "fileTypeText": "Data",
+            "fileDownloadURI": "https://api.uspto.gov/api/v1/datasets/products/files/TRTDXFAP/apc260422.zip",
+            "fileReleaseDate": "2026-04-23 00:26:11",
+            "fileLastModifiedDateTime": "2026-04-23 00:26:10"
+          },
+          {
+            "fileName": "apc260421.zip",
+            "fileSize": 58736909,
+            "fileDataFromDate": "2026-04-21",
+            "fileDataToDate": "2026-04-21",
+            "fileTypeText": "Data",
+            "fileDownloadURI": "https://api.uspto.gov/api/v1/datasets/products/files/TRTDXFAP/apc260421.zip",
+            "fileReleaseDate": "2026-04-22 00:32:33",
+            "fileLastModifiedDateTime": "2026-04-22 00:32:33"
+          },
+          {
+            "fileName": "apc260420.zip",
+            "fileSize": 5510469,
+            "fileDataFromDate": "2026-04-20",
+            "fileDataToDate": "2026-04-20",
+            "fileTypeText": "Data",
+            "fileDownloadURI": "https://api.uspto.gov/api/v1/datasets/products/files/TRTDXFAP/apc260420.zip",
+            "fileReleaseDate": "2026-04-21 00:24:20",
+            "fileLastModifiedDateTime": "2026-04-21 00:24:19"
+          },
+          {
+            "fileName": "apc260419.zip",
+            "fileSize": 9891928,
+            "fileDataFromDate": "2026-04-19",
+            "fileDataToDate": "2026-04-19",
+            "fileTypeText": "Data",
+            "fileDownloadURI": "https://api.uspto.gov/api/v1/datasets/products/files/TRTDXFAP/apc260419.zip",
+            "fileReleaseDate": "2026-04-20 00:24:13",
+            "fileLastModifiedDateTime": "2026-04-20 00:24:12"
+          },
+          {
+            "fileName": "apc260418.zip",
+            "fileSize": 23218744,
+            "fileDataFromDate": "2026-04-18",
+            "fileDataToDate": "2026-04-18",
+            "fileTypeText": "Data",
+            "fileDownloadURI": "https://api.uspto.gov/api/v1/datasets/products/files/TRTDXFAP/apc260418.zip",
+            "fileReleaseDate": "2026-04-19 00:27:29",
+            "fileLastModifiedDateTime": "2026-04-19 00:27:28"
+          },
+          {
+            "fileName": "apc260417.zip",
+            "fileSize": 34877184,
+            "fileDataFromDate": "2026-04-17",
+            "fileDataToDate": "2026-04-17",
+            "fileTypeText": "Data",
+            "fileDownloadURI": "https://api.uspto.gov/api/v1/datasets/products/files/TRTDXFAP/apc260417.zip",
+            "fileReleaseDate": "2026-04-18 00:25:34",
+            "fileLastModifiedDateTime": "2026-04-18 00:25:33"
+          },
+          {
+            "fileName": "apc260416.zip",
+            "fileSize": 36376602,
+            "fileDataFromDate": "2026-04-16",
+            "fileDataToDate": "2026-04-16",
+            "fileTypeText": "Data",
+            "fileDownloadURI": "https://api.uspto.gov/api/v1/datasets/products/files/TRTDXFAP/apc260416.zip",
+            "fileReleaseDate": "2026-04-17 00:28:09",
+            "fileLastModifiedDateTime": "2026-04-17 00:28:09"
+          },
+          {
+            "fileName": "apc260415.zip",
+            "fileSize": 48115653,
+            "fileDataFromDate": "2026-04-15",
+            "fileDataToDate": "2026-04-15",
+            "fileTypeText": "Data",
+            "fileDownloadURI": "https://api.uspto.gov/api/v1/datasets/products/files/TRTDXFAP/apc260415.zip",
+            "fileReleaseDate": "2026-04-16 00:30:54",
+            "fileLastModifiedDateTime": "2026-04-16 00:30:54"
+          },
+          {
+            "fileName": "Table1TrademarkStatusCodes_20250813.doc",
+            "fileSize": 154624,
+            "fileDataFromDate": "2025-08-13",
+            "fileDataToDate": "2025-08-13",
+            "fileTypeText": "Document",
+            "fileDownloadURI": "https://api.uspto.gov/api/v1/datasets/products/files/TRTDXFAP/Table1TrademarkStatusCodes_20250813.doc",
+            "fileReleaseDate": "2025-08-13 17:12:54",
+            "fileLastModifiedDateTime": "2025-08-13 17:12:54"
+          },
+          {
+            "fileName": "Trademark-Applications-Documentation-v2.3-20250813.doc",
+            "fileSize": 2329088,
+            "fileDataFromDate": "2025-08-13",
+            "fileDataToDate": "2025-08-13",
+            "fileTypeText": "Document",
+            "fileDownloadURI": "https://api.uspto.gov/api/v1/datasets/products/files/TRTDXFAP/Trademark-Applications-Documentation-v2.3-20250813.doc",
+            "fileReleaseDate": "2025-08-13 17:12:53",
+            "fileLastModifiedDateTime": "2025-08-13 17:12:53"
+          },
+          {
+            "fileName": "Trademark Series Code_20230620.doc",
+            "fileSize": 27648,
+            "fileDataFromDate": "2023-06-20",
+            "fileDataToDate": "2023-06-20",
+            "fileTypeText": "Document",
+            "fileDownloadURI": "https://api.uspto.gov/api/v1/datasets/products/files/TRTDXFAP/Trademark Series Code_20230620.doc",
+            "fileReleaseDate": "2025-02-12 09:00:00",
+            "fileLastModifiedDateTime": "2025-03-20 15:47:11"
+          }
+        ]
+      }
+    }
+  ]
+}
