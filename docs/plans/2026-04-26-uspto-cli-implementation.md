@@ -462,9 +462,10 @@ from typing import Iterable
 
 
 def upsert_application(conn: sqlite3.Connection, row: dict) -> None:
+    # Caller is responsible for committing — keeps backfill loops fast.
     payload = {**row}
-    payload["matched_ai_terms"] = json.dumps(payload["matched_ai_terms"])
-    payload["matched_hc_terms"] = json.dumps(payload["matched_hc_terms"])
+    payload["matched_ai_terms"] = json.dumps(payload.get("matched_ai_terms") or [])
+    payload["matched_hc_terms"] = json.dumps(payload.get("matched_hc_terms") or [])
     conn.execute(
         """
         INSERT INTO applications (
@@ -495,17 +496,16 @@ def upsert_application(conn: sqlite3.Connection, row: dict) -> None:
         """,
         payload,
     )
-    conn.commit()
 
 
 def upsert_nice_classes(
     conn: sqlite3.Connection, serial_number: str, class_codes: Iterable[str]
 ) -> None:
+    # Caller is responsible for committing.
     conn.executemany(
         "INSERT OR IGNORE INTO nice_classes(serial_number, class_code) VALUES (?, ?)",
         [(serial_number, code) for code in class_codes],
     )
-    conn.commit()
 
 
 def get_max_filing_date(conn: sqlite3.Connection) -> date | None:
@@ -1157,6 +1157,9 @@ def run_backfill(
             upsert_application(conn, row)
             upsert_nice_classes(conn, row["serial_number"], classes)
             inserted += 1
+        # Commit at end of each month — keeps batches small enough to recover
+        # from interruption without redoing too much work.
+        conn.commit()
     return inserted
 ```
 
