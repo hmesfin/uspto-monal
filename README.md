@@ -72,4 +72,3 @@ pytest
   - `templates/trends.html.j2` — report template
 - `scripts/probe_api.py` — reproducible API spike for re-capturing fixtures
 - `tests/` — pytest suite (53 tests)
-- `docs/plans/` — design + implementation docs
