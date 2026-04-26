@@ -57,6 +57,14 @@ def render_report(conn: sqlite3.Connection, output: Path) -> None:
         if not sts.empty else _empty_fig("No status data")
     )
 
+    saas = analyze.saas_share_over_time(conn)
+    fig_saas = (
+        px.line(saas, x="month", y="saas_share_pct", title=None,
+                labels={"saas_share_pct": "Class 42 share (%)"}).to_html(
+            full_html=False, include_plotlyjs=False)
+        if not saas.empty else _empty_fig("No SaaS data")
+    )
+
     recent = analyze.recent_filings(conn, limit=50)
     env = Environment(
         loader=FileSystemLoader(str(_TEMPLATES_DIR)),
@@ -67,6 +75,7 @@ def render_report(conn: sqlite3.Connection, output: Path) -> None:
         stats=stats,
         fig_filings=fig_filings, fig_ai_terms=fig_ai_terms,
         fig_top=fig_top, fig_classes=fig_classes, fig_status=fig_status,
+        fig_saas=fig_saas,
         recent=recent,
         generated_at=datetime.utcnow().isoformat(timespec="seconds") + "Z",
     )

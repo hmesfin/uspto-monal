@@ -23,6 +23,17 @@ th, td { text-align: left; padding: 4px 8px; border-bottom: 1px solid #eee; }
     <div class="num {% if stats.yoy_pct >= 0 %}delta-up{% else %}delta-dn{% endif %}">
       {{ "%+.1f"|format(stats.yoy_pct) }}%
     </div></div>
+  <div class="card" style="background:#eef6ff">
+    <div>SaaS share <small>(Nice class 42)</small></div>
+    <div class="num">{{ "%.0f"|format(stats.saas_share_pct) }}%</div>
+    <div><small>{{ stats.saas_total }} of {{ stats.total }} marks</small></div>
+  </div>
+  <div class="card" style="background:#eef6ff">
+    <div>SaaS YoY</div>
+    <div class="num {% if stats.saas_yoy_pct >= 0 %}delta-up{% else %}delta-dn{% endif %}">
+      {{ "%+.1f"|format(stats.saas_yoy_pct) }}%
+    </div>
+  </div>
 </div>
 
 <h2>Filings per month</h2>
@@ -39,6 +50,12 @@ th, td { text-align: left; padding: 4px 8px; border-bottom: 1px solid #eee; }
 
 <h2>Status breakdown</h2>
 {{ fig_status | safe }}
+
+<h2>SaaS share over time <small>(Nice class 42 % of monthly filings)</small></h2>
+<p><em>Is the "SaaS is dead" thesis showing up in healthcare-AI trademark filings?
+Watch the slope, not the absolute numbers — the y-axis is class 42's share of
+total in-scope marks per month.</em></p>
+{{ fig_saas | safe }}
 
 <h2>Recent filings</h2>
 <table>
