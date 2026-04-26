@@ -1,0 +1,56 @@
+<!doctype html>
+<html><head>
+<meta charset="utf-8">
+<title>USPTO Healthcare+AI Trademark Trends</title>
+<style>
+body { font-family: system-ui, sans-serif; margin: 2rem; max-width: 1100px; }
+h1, h2 { border-bottom: 1px solid #ddd; padding-bottom: 0.3rem; }
+.summary { display: flex; gap: 2rem; margin: 1rem 0; }
+.card { background: #f5f5f5; padding: 1rem 1.5rem; border-radius: 8px; }
+.card .num { font-size: 2rem; font-weight: bold; }
+table { border-collapse: collapse; width: 100%; }
+th, td { text-align: left; padding: 4px 8px; border-bottom: 1px solid #eee; }
+.delta-up { color: #2a7; } .delta-dn { color: #c33; }
+</style>
+</head><body>
+<h1>USPTO Healthcare + AI Trademark Trends</h1>
+<p><em>Generated {{ generated_at }} · Date range: {{ stats.date_min }} → {{ stats.date_max }}</em></p>
+
+<div class="summary">
+  <div class="card"><div>Total marks</div><div class="num">{{ stats.total }}</div></div>
+  <div class="card"><div>This year</div><div class="num">{{ stats.this_year }}</div></div>
+  <div class="card"><div>YoY change</div>
+    <div class="num {% if stats.yoy_pct >= 0 %}delta-up{% else %}delta-dn{% endif %}">
+      {{ "%+.1f"|format(stats.yoy_pct) }}%
+    </div></div>
+</div>
+
+<h2>Filings per month</h2>
+{{ fig_filings | safe }}
+
+<h2>AI keyword trends</h2>
+{{ fig_ai_terms | safe }}
+
+<h2>Top 25 applicants</h2>
+{{ fig_top | safe }}
+
+<h2>Nice class distribution</h2>
+{{ fig_classes | safe }}
+
+<h2>Status breakdown</h2>
+{{ fig_status | safe }}
+
+<h2>Recent filings</h2>
+<table>
+  <tr><th>Serial</th><th>Filed</th><th>Owner</th><th>Mark</th><th>Status</th></tr>
+  {% for r in recent %}
+  <tr>
+    <td><a href="https://tsdr.uspto.gov/#caseNumber={{ r.serial_number }}&caseType=SERIAL_NO&searchType=statusSearch">{{ r.serial_number }}</a></td>
+    <td>{{ r.filing_date }}</td>
+    <td>{{ r.owner_name or "" }}</td>
+    <td>{{ r.mark_text or "" }}</td>
+    <td>{{ r.status_description or "" }}</td>
+  </tr>
+  {% endfor %}
+</table>
+</body></html>
